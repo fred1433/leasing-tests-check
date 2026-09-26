@@ -24,8 +24,10 @@ prospect two calendar invites.
 
 - Regression test, pushed alone before any fix: `tests/e2e/double-booking.spec.ts` (commit 2be467f).
 - It failed in CI: https://github.com/fred1433/leasing-tests-check/actions/runs/36246471712
-  `expect(locator).toHaveCount(1)`, received 2. The Playwright trace is attached to that run as the
-  `playwright-traces` artifact.
+  `expect(locator).toHaveCount(1)`, received 2. That run's trace artifact held unredacted Clerk session tokens and
+  was deleted on 2026-09-26 (uploads are redacted since pull request #5). A redacted trace of the same test, re-run
+  at the same commit 2be467f on 2026-09-26, is published at
+  https://trace.playwright.dev/?trace=https://leasing-tests.theaipipe.com/double-booking-trace.zip
 
 ## Cause
 

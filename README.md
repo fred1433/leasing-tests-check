@@ -1,4 +1,4 @@
-# Showings: a Playwright + TypeScript suite that never messages a real person
+# Showings: a Playwright + TypeScript suite that tests notifications without contacting tenants
 
 A small, real Next.js leasing application (synthetic data only) and the test suite that protects one flow end to end:
 **reschedule a showing, and the old notice must not send.**
@@ -12,6 +12,10 @@ A leasing agent books a showing for a unit that has a tenant in place. The tenan
 day before. The agent moves the showing. Later, the old queued notice comes due (or retries after a provider
 timeout). Only a notice for the current time may reach the sending boundary.
 
+Scope: this regression covers the tenant's SMS and email. Calendar updates, and what happens when a showing moves
+after an earlier notice already went out, are separate findings logged in
+[docs/EXPLORATORY_NOTE.md](docs/EXPLORATORY_NOTE.md), not covered here.
+
 - Next.js 16 (App Router), TypeScript, PostgreSQL
 - Clerk, development instance, real sign-in through Clerk's own form with a `+clerk_test` identity
 - A notification worker with a queue, retries and backoff, as a separate process
@@ -21,31 +25,50 @@ The evidence of a harmful change being stopped is in the pull requests:
 
 - **PR #1, a deliberately injected defect** (said so in its title, description and commit message, and labelled
   `injected-defect`): the worker renders from the job's snapshot and skips
-  the showing lookup. The end-to-end test fails on the exact stale notice; the fix restores a one-column currency
-  check; the same test passes.
+  the showing lookup. The end-to-end test fails on the exact stale notice; the fix restores the currency check (one
+  primary-key read of two columns, version and status); the same test passes.
 - **PR #2, a real bug found by exploratory testing**: double-clicking "Book showing" booked twice. The regression test
   was pushed first and failed; the fix followed; the same test passes. See [docs/BUG_REPORT.md](docs/BUG_REPORT.md).
 
-## How the suite keeps messages away from people
+Later, a review found a narrower window: the worker could read version 1, a move could commit version 2, and the
+worker would still capture the version-1 notice. The worker now reads the showing `FOR SHARE` inside the same
+transaction that commits the outbound intent, and a move takes `FOR UPDATE` on the same row. Either the move commits
+first and the old notice is dropped, or the notice commits first and the move waits for it (the notice was true when
+it was committed; the move then queues its own). `tests/integration/interleaving.test.ts` forces both orders
+deterministically; both tests fail if the lock is removed.
 
-Three independent controls, each with its own tests:
+## How this demo avoids contacting tenants
+
+- Test notification payloads are captured, never delivered.
+- The notification worker has no network route.
+- Clerk uses a development instance, a password sign-in and a test identity.
+- Staging transports are disabled in this sample.
+
+In more detail, each with its own tests:
 
 1. **No production credentials in a test process.** `DEPLOYMENT_TARGET` must be set explicitly to `test` or
    `staging` (never inferred from `NODE_ENV`: `next start` always runs as production). On `test`, any Twilio,
    SendGrid or Graph secret, or any `sk_live_` / `pk_live_` Clerk key, stops the process at startup.
-2. **One server-side sending boundary** (`lib/outbound/boundary.ts`) for Twilio SMS, SendGrid mail, Microsoft Graph
-   mail **and calendar events** (Exchange emails every attendee; that cannot be switched off), and Clerk invitations
-   and phone codes. It checks every recipient-bearing field (to, cc, bcc, reply-to, from, attendees), then scans the
-   whole final payload for any other address or phone number, against an allowlist. A missing or malformed allowlist
-   closes the gate. On the test target the transport is a capture: the final rendered payload is stored and no
-   provider is called. A capture proves what the application attempted to send, not delivery or lawful service.
+2. **One server-side sending boundary** (`lib/outbound/boundary.ts`) for the application's own messages: Twilio SMS,
+   SendGrid mail, Microsoft Graph mail **and calendar events** (creating an event with attendees makes Exchange send
+   invitations, and updates can notify attendees, so a calendar write is treated as a send), and Clerk invitations
+   and phone codes if the application ever sends them. It validates the known recipient-bearing fields (to, cc, bcc,
+   reply-to, from, attendees) against an allowlist, then runs a defensive scan of the whole final payload for other
+   addresses or phone numbers. The scan is a safety net, not proof that every way of writing an address is
+   understood. A missing or malformed allowlist closes the gate. On the test target the transport is a capture: the
+   final rendered payload is stored and no provider is called. On staging the boundary refuses to send, because
+   staging transports are not wired in this sample. A capture proves what the application attempted to send, not
+   delivery or lawful service.
 3. **The worker has no route to the internet.** In CI it runs in its own Linux network namespace (loopback only) and
    reaches PostgreSQL through the unix socket; locally on macOS, under a `sandbox-exec` profile that denies outbound
    IP. Code that bypasses the boundary and calls a provider directly cannot connect. The CI worker refuses to start if
    it can reach the internet.
 
-Clerk is a fourth messaging surface. The test identity is a `+clerk_test` address signing in with a password: Clerk
-sends no email for it, and any verification code is the fixed test code. Global setup refuses any other identity.
+Clerk's own sign-in messages do not pass through this boundary. The suite relies on Clerk's documented test
+behaviour: the identity is a `+clerk_test` address signing in with a password, and when Clerk asks for a code it is
+the fixed test code, which Clerk does not email. Verification *links* are emailed even to test addresses, so the
+suite never uses them. Global setup refuses any identity without `+clerk_test`, and teardown revokes the test user's
+sessions, failing the run if that cannot be confirmed.
 
 ## Selected Ontario entry-policy scenarios
 
@@ -54,9 +77,13 @@ Not a compliance engine and not legal advice. `lib/policy/entry.ts` models a nar
 - **Showing to a prospective tenant (RTA s.26(3))**: only after a notice of termination or an agreement to
   terminate; between 8 a.m. and 8 p.m.; after an attempt to inform the tenant. A lease end date alone never allows a
   showing. No 24-hour written notice is required for this basis. Whether an attempt was a *reasonable* effort is left
-  to a person.
+  to a person. Booking is kept apart from entry: a booking is "bookable, notice pending" (`assessShowingBooking`); a
+  planned or queued notice never counts as an attempt, only a recorded one does (`assessEntry`). Keeping the whole
+  visit inside 8 a.m. to 8 p.m. (so 7:45 p.m. for 30 minutes is refused) is this sample's conservative scheduling
+  rule, not a statutory test.
 - **Entry on written notice (s.27)**: a written-notice ground; at least 24 hours of elapsed time (tested across both
-  daylight-saving changes); reason, date and time of entry stated; 8 a.m. to 8 p.m.
+  daylight-saving changes); reason, date and time of entry stated; 8 a.m. to 8 p.m. The "inspection" and "reason in
+  the tenancy agreement" labels do not establish that the entry is reasonable; the decision says so.
 - **Service kept apart from communication**: email counts only with written consent (LTB Rule 3.1); posting on the
   unit door is allowed for a s.27 notice (Rule 3.2); a text message is not a listed service method. Mail, courier and
   fax are reported as excluded because their deemed-service dates (Rule 3.9) are not modelled.
@@ -84,11 +111,14 @@ runs with one worker (the clock is shared), zero retries, and traces kept only f
 
 - **Unit, integration and isolation**: no secrets.
 - **End to end (Playwright, real Clerk)**: builds the application from the same checkout, checks that the server under
-  test reports this run's deployment id (so a stale server cannot pass), runs the suite, revokes the test user's Clerk sessions, redacts every trace and report file
-  (`scripts/redact_traces.py`: cookies, Clerk session, dev-browser and testing tokens) and verifies the result, and
-  only then uploads the HTML report, and the redacted traces on failure. If verification fails, nothing is uploaded.
+  test reports this run's deployment id (so a stale server cannot pass), runs the suite, revokes the test user's Clerk
+  sessions and checks that none is left (the run fails otherwise), then redacts every trace and report file
+  (`scripts/redact_traces.py`: cookies, Clerk session, dev-browser and testing tokens, plus the exact secret values)
+  and verifies the result. Only then are the HTML report, and the redacted traces on failure, uploaded. Without the
+  revocation marker or a clean verification, nothing is uploaded. Both failure paths have negative tests.
 
-Both are required checks on `main`, for administrators too. Pull requests from forks get no secrets (GitHub's
+Both are required checks on `main`, with no bypass, administrators included: see
+[docs/BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md) for the public ruleset and a refused direct push. Pull requests from forks get no secrets (GitHub's
 default); the workflow never uses `pull_request_target`, and the end-to-end check fails for a fork until a maintainer
 has read the change and reruns it from a branch in this repository.
 

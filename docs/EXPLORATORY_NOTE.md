@@ -20,7 +20,8 @@ prospect could receive a wrong, duplicate or missing message.
    immediately when the earlier one already went out?
 4. **Cancelling a showing after its notice went out sends nothing.** Same family as 3. Product question.
 5. Rescheduling into the past is refused, but the message adds a second, confusing sentence ("No attempt to inform
-   the tenant is recorded before the showing"). Minor wording issue.
+   the tenant is recorded before the showing"). Minor wording issue. Since fixed as a side effect of separating
+   "bookable, notice pending" from a recorded attempt to inform: the refusal now has one sentence.
 6. Booking at 7:45 p.m. is refused because a 30-minute showing would end after 8 p.m.; the message names the rule.
    No issue.
 7. At 390 px the forms wrap to two columns and every control stays reachable. No issue.

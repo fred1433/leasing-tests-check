@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assessEntry } from "@/lib/policy/entry";
+import { assessEntry, assessShowingBooking } from "@/lib/policy/entry";
 import { zonedInstant } from "@/lib/time";
 
 const at = (y: number, mo: number, d: number, h: number, mi = 0) => zonedInstant(y, mo, d, h, mi);
@@ -136,5 +136,51 @@ describe("s.27 entry on written notice", () => {
 describe("declared exclusions", () => {
   it.each(["emergency", "consent_at_entry"] as const)("%s is excluded, not judged", (basis) => {
     expect(assessEntry({ basis }).outcome).toBe("excluded");
+  });
+});
+
+describe("booking a showing is not entry", () => {
+  const start = at(2026, 10, 6, 14);
+  const base = { terminationBasis: "tenant_notice" as const, entryStart: start, entryEnd: plus(start, 30), plannedNoticeAt: at(2026, 10, 5, 10) };
+
+  it("is bookable with the notice still pending, never 'tenant informed'", () => {
+    expect(assessShowingBooking(base)).toEqual({
+      outcome: "bookable_notice_pending",
+      reasons: [],
+      pending: ["Tenant not informed yet: an attempt must be recorded before the entry is eligible."],
+    });
+  });
+
+  it("a planned notice does not make the entry eligible: only a recorded attempt does", () => {
+    const entry = { basis: "showing_s26_3" as const, terminationBasis: "tenant_notice" as const, entryStart: start, entryEnd: plus(start, 30) };
+    expect(assessEntry({ ...entry, informAttemptAt: null }).outcome).toBe("not_eligible");
+    expect(assessEntry({ ...entry, informAttemptAt: at(2026, 10, 5, 10) }).outcome).toBe("eligible");
+  });
+
+  it("refuses when the notice could only go out at or after the start", () => {
+    expect(assessShowingBooking({ ...base, plannedNoticeAt: start }).reasons).toEqual(["There is no time left to inform the tenant before the showing."]);
+  });
+
+  it("refuses without a termination basis, whatever the lease end date", () => {
+    expect(assessShowingBooking({ ...base, terminationBasis: null, leaseEnd: "2026-10-31" }).outcome).toBe("not_bookable");
+  });
+});
+
+describe("what the software leaves to a person", () => {
+  const start = at(2026, 10, 14, 10);
+  const request = (reason: string) => ({
+    basis: "written_notice_s27" as const,
+    reason,
+    entryStart: start,
+    entryEnd: plus(start, 60),
+    notice: { servedAt: plus(start, -25 * 60), method: "hand" as const, statesReason: true, statesDate: true, statesTimeOfEntry: true },
+  });
+  it.each([
+    ["inspection", /inspection is of the kind the Act allows/],
+    ["reason_in_tenancy_agreement", /reason written in the tenancy agreement is reasonable/],
+  ])("a %s label alone does not establish reasonableness", (reason, pattern) => {
+    const d = assessEntry(request(reason));
+    expect(d.outcome).toBe("eligible");
+    expect(d.notDecidedHere.join(" ")).toMatch(pattern);
   });
 });

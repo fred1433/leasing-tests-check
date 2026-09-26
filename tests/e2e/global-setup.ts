@@ -1,5 +1,7 @@
 import { clerkSetup } from "@clerk/testing/playwright";
 import { spawn, type ChildProcess } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { revokeTestUserSessions } from "../support/clerk-sessions";
 import { applySchema, closeTestPool, testPool } from "../support/data";
 
 /**
@@ -23,6 +25,7 @@ export default async function globalSetup() {
     throw new Error(`the server under test is ${served.deploymentId}, expected ${process.env.DEPLOYMENT_ID}: stale server?`);
   }
 
+  rmSync("reports/sessions-revoked.ok", { force: true });
   await applySchema();
   await testPool().query("DELETE FROM worker_heartbeats WHERE true").catch(() => undefined);
   await clerkSetup();
@@ -60,32 +63,25 @@ export default async function globalSetup() {
       if (!left.rowCount) break;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
-    await revokeTestUserSessions();
-    if (worker?.pid) {
-      try {
-        process.kill(-worker.pid, "SIGTERM");
-      } catch {
-        /* already gone */
+    try {
+      // A failed revocation fails the run, and without its marker file the workflow uploads nothing.
+      const revoked = await revokeTestUserSessions({
+        secretKey: process.env.CLERK_SECRET_KEY!,
+        email: process.env.E2E_CLERK_USER_EMAIL!,
+      });
+      mkdirSync("reports", { recursive: true });
+      writeFileSync("reports/sessions-revoked.ok", `${new Date().toISOString()} revoked ${revoked}\n`);
+      console.log(`revoked ${revoked} test-user session(s); none left active`);
+    } finally {
+      if (worker?.pid) {
+        try {
+          process.kill(-worker.pid, "SIGTERM");
+        } catch {
+          /* already gone */
+        }
       }
+      await closeTestPool();
     }
-    await closeTestPool();
   };
 }
 
-/** Ends every session of the test user after the run, so a token that reached a log or a trace is already dead. */
-async function revokeTestUserSessions() {
-  const secret = process.env.CLERK_SECRET_KEY;
-  const email = process.env.E2E_CLERK_USER_EMAIL;
-  if (!secret || !email) return;
-  const headers = { Authorization: `Bearer ${secret}` };
-  try {
-    const users = (await (await fetch(`https://api.clerk.com/v1/users?email_address=${encodeURIComponent(email)}`, { headers })).json()) as Array<{ id: string }>;
-    for (const user of users) {
-      const sessions = (await (await fetch(`https://api.clerk.com/v1/sessions?user_id=${user.id}&status=active&limit=500`, { headers })).json()) as Array<{ id: string }>;
-      for (const session of sessions) await fetch(`https://api.clerk.com/v1/sessions/${session.id}/revoke`, { method: "POST", headers });
-      console.log(`revoked ${sessions.length} test-user session(s)`);
-    }
-  } catch (error) {
-    console.error("could not revoke test-user sessions", error);
-  }
-}

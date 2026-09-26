@@ -3,10 +3,11 @@
 
 Traces record request headers, cookies and response bodies: Clerk session JWTs,
 dev-browser tokens and testing tokens would otherwise be published with a CI
-artifact. This runs before any upload. Exit code 1 if anything survives, so the
+artifact. This runs before any upload. Exact secret values passed in FORBIDDEN_VALUES (one per line) are checked
+in every member, images included. Exit code 1 if anything survives, so the
 upload step never runs on an unredacted file.
 """
-import json, re, sys, zipfile
+import json, os, re, sys, zipfile
 from pathlib import Path
 
 PATTERNS = [
@@ -72,10 +73,18 @@ def redact_zip(path: Path) -> int:
     leaks = 0
     with zipfile.ZipFile(path) as z:
         for name in z.namelist():
-            if not name.lower().endswith(IMAGES) and LEAK.search(z.read(name)):
+            data = z.read(name)
+            if forbidden_in(data) or (not name.lower().endswith(IMAGES) and LEAK.search(data)):
                 print(f"LEAK remains in {path}:{name}")
                 leaks += 1
     return leaks
+
+
+FORBIDDEN = [v.strip().encode() for v in os.environ.get("FORBIDDEN_VALUES", "").splitlines() if v.strip()]
+
+
+def forbidden_in(data: bytes) -> bool:
+    return any(value in data for value in FORBIDDEN)
 
 
 def main(folders):
@@ -93,7 +102,7 @@ def main(folders):
                 clean = scrub_bytes(data)
                 if clean != data:
                     path.write_bytes(clean)
-                if LEAK.search(clean):
+                if LEAK.search(clean) or forbidden_in(clean):
                     print(f"LEAK remains in {path}")
                     leaks += 1
     print(f"redacted {zips} trace archives; leaks remaining: {leaks}")

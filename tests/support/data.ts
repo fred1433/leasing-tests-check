@@ -153,3 +153,38 @@ export async function waitForWorker(runId: string, timeoutMs = 15_000) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
+
+/**
+ * Runs setup and body under one run id and always tries to clean up, whatever fails:
+ * a half-finished seed, a failed sign-in setup, the test itself, or the clock reset.
+ * Data deletion is attempted even when the clock reset throws; the first error is rethrown.
+ */
+export async function withRunData<T>(
+  runId: string,
+  body: () => Promise<T>,
+  opts: { resetClock?: () => Promise<void>; keep?: boolean } = {},
+): Promise<T> {
+  const resetClock = opts.resetClock ?? (() => setTestClock(null));
+  let failure: unknown;
+  try {
+    return await body();
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    let cleanupError: unknown;
+    try {
+      await resetClock();
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (!opts.keep) {
+      try {
+        await cleanupRun(runId);
+      } catch (error) {
+        cleanupError ??= error;
+      }
+    }
+    if (cleanupError && !failure) throw cleanupError;
+  }
+}
