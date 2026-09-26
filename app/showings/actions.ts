@@ -39,6 +39,7 @@ export async function book(form: FormData) {
       agentEmail: AGENT_EMAIL,
       startsAt: parseLocal(form.get("date"), form.get("time")),
       createdBy: userId,
+      requestKey: String(form.get("requestKey") ?? "") || undefined,
     });
   });
 }

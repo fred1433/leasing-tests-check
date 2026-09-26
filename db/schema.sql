@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS showings (
   version int NOT NULL DEFAULT 1,
   created_by text NOT NULL
 );
+-- One key per rendered booking form: a repeated submission of the same form books nothing new.
+ALTER TABLE showings ADD COLUMN IF NOT EXISTS request_key text;
+CREATE UNIQUE INDEX IF NOT EXISTS showings_request_key ON showings (request_key);
 
 CREATE TABLE IF NOT EXISTS notification_jobs (
   id bigserial PRIMARY KEY,
