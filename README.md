@@ -88,6 +88,8 @@ Both are required checks on `main`, for administrators too. Pull requests from f
 default); the workflow never uses `pull_request_target`, and the end-to-end check fails for a fork until a maintainer
 has read the change and reruns it from a branch in this repository.
 
+Measured reliability of these checks, and the Stryker results: [docs/MEASUREMENTS.md](docs/MEASUREMENTS.md).
+
 `mutation.yml` runs Stryker on demand, apart from the required checks. Its score describes how the unit tests react to
 small rewrites of the rule code; it is not a count of real bugs caught.
 
