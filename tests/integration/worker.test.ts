@@ -169,6 +169,24 @@ describe.runIf(process.env.DATABASE_URL)("notification worker against PostgreSQL
     expect(await jobsFor(runId)).toEqual([]);
   });
 
+  it("the same booking request key books once, even when both requests race", async () => {
+    const runId = run("request-key");
+    const ids = await seedUnits(runId, [UNIT_B]);
+    await setTestClock(zonedInstant(2026, 10, 1, 9));
+    const request = {
+      unitId: ids["Unit B"],
+      prospectName: "Jordan Lee",
+      prospectEmail: "jordan.lee@prospects.example.test",
+      agentEmail: "agent@office.example.test",
+      startsAt: zonedInstant(2026, 10, 6, 14),
+      createdBy: "user_vitest",
+      requestKey: `${runId}-form-1`,
+    };
+    const [a, b] = await Promise.all([bookShowing(testPool(), request), bookShowing(testPool(), request)]);
+    expect(a).toBe(b);
+    expect((await jobsFor(runId)).map((j) => j.kind)).toEqual(["tenant_sms", "tenant_email", "calendar_event"]);
+  });
+
   it("a seed that fails halfway leaves rows that are identifiable and removable, and spares other runs", async () => {
     const other = run("bystander");
     await seedUnits(other, [UNIT_B]);
