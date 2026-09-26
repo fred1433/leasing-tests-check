@@ -60,6 +60,7 @@ export default async function globalSetup() {
       if (!left.rowCount) break;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
+    await revokeTestUserSessions();
     if (worker?.pid) {
       try {
         process.kill(-worker.pid, "SIGTERM");
@@ -69,4 +70,22 @@ export default async function globalSetup() {
     }
     await closeTestPool();
   };
+}
+
+/** Ends every session of the test user after the run, so a token that reached a log or a trace is already dead. */
+async function revokeTestUserSessions() {
+  const secret = process.env.CLERK_SECRET_KEY;
+  const email = process.env.E2E_CLERK_USER_EMAIL;
+  if (!secret || !email) return;
+  const headers = { Authorization: `Bearer ${secret}` };
+  try {
+    const users = (await (await fetch(`https://api.clerk.com/v1/users?email_address=${encodeURIComponent(email)}`, { headers })).json()) as Array<{ id: string }>;
+    for (const user of users) {
+      const sessions = (await (await fetch(`https://api.clerk.com/v1/sessions?user_id=${user.id}&status=active&limit=500`, { headers })).json()) as Array<{ id: string }>;
+      for (const session of sessions) await fetch(`https://api.clerk.com/v1/sessions/${session.id}/revoke`, { method: "POST", headers });
+      console.log(`revoked ${sessions.length} test-user session(s)`);
+    }
+  } catch (error) {
+    console.error("could not revoke test-user sessions", error);
+  }
 }

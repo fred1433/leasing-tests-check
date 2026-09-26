@@ -19,7 +19,8 @@ timeout). Only a notice for the current time may reach the sending boundary.
 
 The evidence of a harmful change being stopped is in the pull requests:
 
-- **PR #1, a deliberately injected defect** (labelled as such): the worker renders from the job's snapshot and skips
+- **PR #1, a deliberately injected defect** (said so in its title, description and commit message, and labelled
+  `injected-defect`): the worker renders from the job's snapshot and skips
   the showing lookup. The end-to-end test fails on the exact stale notice; the fix restores a one-column currency
   check; the same test passes.
 - **PR #2, a real bug found by exploratory testing**: double-clicking "Book showing" booked twice. The regression test
@@ -72,6 +73,8 @@ Sources read on 2026-09-26: LTB Interpretation Guideline 19, "The Landlord's Rig
 | Integration (Vitest + PostgreSQL) | `tests/integration` | Worker retries and exhaustion, cancel then retry, reschedule, missing or malformed configuration, idempotent capture, refused booking, a seed that fails halfway, network isolation of the worker |
 | End to end (Playwright) | `tests/e2e` | Real Clerk sign-in; reschedule; valid booking; cancel then retry; forbidden calendar attendee stopped before Graph; missing termination basis; 8 p.m. limit; double submission books once; signed-out access |
 
+The Playwright run has 9 tests: 8 scenarios plus the Clerk sign-in step they depend on.
+
 Every test creates its data under its own run id and removes it afterwards, including after a failure. Playwright
 runs with one worker (the clock is shared), zero retries, and traces kept only for failures.
 
@@ -81,8 +84,9 @@ runs with one worker (the clock is shared), zero retries, and traces kept only f
 
 - **Unit, integration and isolation**: no secrets.
 - **End to end (Playwright, real Clerk)**: builds the application from the same checkout, checks that the server under
-  test reports this run's deployment id (so a stale server cannot pass), runs the suite, uploads the HTML report, and
-  the traces on failure.
+  test reports this run's deployment id (so a stale server cannot pass), runs the suite, revokes the test user's Clerk sessions, redacts every trace and report file
+  (`scripts/redact_traces.py`: cookies, Clerk session, dev-browser and testing tokens) and verifies the result, and
+  only then uploads the HTML report, and the redacted traces on failure. If verification fails, nothing is uploaded.
 
 Both are required checks on `main`, for administrators too. Pull requests from forks get no secrets (GitHub's
 default); the workflow never uses `pull_request_target`, and the end-to-end check fails for a fork until a maintainer
