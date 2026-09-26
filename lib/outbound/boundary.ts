@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { deploymentIdentity, DeploymentConfigError } from "../deployment";
 import { AllowlistError, parseAllowlist, type Recipient } from "./allowlist";
 import type { OutboundMessage } from "./messages";
@@ -34,6 +34,11 @@ export class TransientTransportError extends Error {
 export interface SendContext {
   runId: string;
   jobId: number | null;
+  /**
+   * The caller's open transaction, if any. The capture (the committed outbound intent) and any
+   * refusal are written inside it, so they commit or roll back with the caller's decision.
+   */
+  tx?: PoolClient;
 }
 
 function mask(r: Recipient): string {
@@ -45,7 +50,7 @@ function mask(r: Recipient): string {
 }
 
 async function recordRefusal(pool: Pool, message: OutboundMessage, ctx: SendContext, reason: string) {
-  await pool.query(
+  await (ctx.tx ?? pool).query(
     "INSERT INTO outbound_refusals (run_id, job_id, channel, reason) VALUES ($1, $2, $3, $4)",
     [ctx.runId, ctx.jobId, message.channel, reason],
   );
@@ -115,7 +120,7 @@ async function captureTransport(pool: Pool, message: OutboundMessage, recipients
     );
     if (fault.rowCount) throw new TransientTransportError(`${message.channel}: simulated provider timeout`);
   }
-  const inserted = await pool.query(
+  const inserted = await (ctx.tx ?? pool).query(
     `INSERT INTO outbound_captures (run_id, job_id, channel, recipients, payload)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (job_id) DO NOTHING`,

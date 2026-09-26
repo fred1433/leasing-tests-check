@@ -93,7 +93,14 @@ jobs:
       - name: Redact traces and reports before any upload
         id: redact
         if: always()
-        run: python3 scripts/redact_traces.py test-results reports
+        env:
+          # Exact secret values that must never appear in an uploaded file, whatever their shape.
+          FORBIDDEN_VALUES: |
+            ${{ secrets.CLERK_SECRET_KEY }}
+            ${{ secrets.E2E_CLERK_USER_PASSWORD }}
+        run: |
+          test -f reports/sessions-revoked.ok || { echo "::error::test-user sessions were not confirmed revoked; nothing is uploaded"; exit 1; }
+          python3 scripts/redact_traces.py test-results reports
       - uses: actions/upload-artifact@v4
         if: always() && steps.redact.outcome == 'success'
         with:

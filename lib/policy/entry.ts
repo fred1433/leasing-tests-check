@@ -38,7 +38,10 @@ export type EntryRequest =
       leaseEnd?: string | null;
       entryStart: Date;
       entryEnd: Date;
-      /** When the application attempted to inform the tenant, if it did. */
+      /**
+       * When an attempt to inform the tenant was actually made and recorded (a notice handed to the
+       * sending boundary), if one was. A planned or queued notice is not an attempt: see assessShowingBooking.
+       */
       informAttemptAt: Date | null;
     }
   | {
@@ -74,6 +77,11 @@ function sameLocalDay(a: Date, b: Date): boolean {
   return pa.year === pb.year && pa.month === pb.month && pa.day === pb.day;
 }
 
+/**
+ * The Act speaks of entering between 8 a.m. and 8 p.m. Requiring the whole visit, start to end,
+ * to fit in that window (so 7:45 p.m. for 30 minutes is refused) is this sample's conservative
+ * scheduling rule, not a statutory test.
+ */
 function withinEightToEight(start: Date, end: Date): boolean {
   return end > start && sameLocalDay(start, end) && localMinutes(start) >= EIGHT_AM && localMinutes(end) <= EIGHT_PM && localMinutes(end) > 0;
 }
@@ -119,6 +127,47 @@ export function assessEntry(request: EntryRequest): EntryDecision {
   return assessWrittenNotice(request);
 }
 
+export interface BookingDecision {
+  outcome: "bookable_notice_pending" | "not_bookable";
+  reasons: string[];
+  /** What must still happen before the entry itself is eligible. */
+  pending: string[];
+}
+
+/**
+ * Whether a showing may be put in the calendar. This is a different question from whether the
+ * entry is eligible: at booking time the tenant has not been informed yet, and the planned notice
+ * may still be blocked, fail or be superseded. So the booking checks the prerequisites that exist
+ * now, and leaves "tenant informed" pending until an attempt is recorded (assessEntry).
+ */
+export function assessShowingBooking(request: {
+  terminationBasis: TerminationBasis | null;
+  leaseEnd?: string | null;
+  entryStart: Date;
+  entryEnd: Date;
+  plannedNoticeAt: Date;
+}): BookingDecision {
+  const reasons: string[] = [];
+  if (!request.terminationBasis) {
+    reasons.push(
+      request.leaseEnd
+        ? `No notice of termination or agreement to terminate is recorded. The lease end date (${request.leaseEnd}) does not by itself allow showings.`
+        : "No notice of termination or agreement to terminate is recorded.",
+    );
+  }
+  if (!withinEightToEight(request.entryStart, request.entryEnd)) {
+    reasons.push("Showings must fall between 8 a.m. and 8 p.m., office time.");
+  }
+  if (request.plannedNoticeAt >= request.entryStart) {
+    reasons.push("There is no time left to inform the tenant before the showing.");
+  }
+  return {
+    outcome: reasons.length ? "not_bookable" : "bookable_notice_pending",
+    reasons,
+    pending: reasons.length ? [] : ["Tenant not informed yet: an attempt must be recorded before the entry is eligible."],
+  };
+}
+
 function assessWrittenNotice(request: Extract<EntryRequest, { basis: "written_notice_s27" }>): EntryDecision {
   const { notice } = request;
   const reasons: string[] = [];
@@ -142,12 +191,15 @@ function assessWrittenNotice(request: Extract<EntryRequest, { basis: "written_no
   if (request.entryStart.getTime() - notice.servedAt.getTime() < DAY_MS) {
     reasons.push("Written notice must be served at least 24 hours before entry.");
   }
-  return {
-    outcome: reasons.length ? "not_eligible" : "eligible",
-    reasons,
-    notDecidedHere:
-      notice.method === "email_with_written_consent"
-        ? ["Rule 3.9 deems email served on the day it is sent; this sample counts from the send time, an assumption to confirm."]
-        : [],
-  };
+  const notDecidedHere: string[] = [];
+  if (notice.method === "email_with_written_consent") {
+    notDecidedHere.push("Rule 3.9 deems email served on the day it is sent; this sample counts from the send time, an assumption to confirm.");
+  }
+  if (request.reason === "inspection") {
+    notDecidedHere.push("Whether the inspection is of the kind the Act allows and is reasonable in the circumstances.");
+  }
+  if (request.reason === "reason_in_tenancy_agreement") {
+    notDecidedHere.push("Whether the reason written in the tenancy agreement is reasonable.");
+  }
+  return { outcome: reasons.length ? "not_eligible" : "eligible", reasons, notDecidedHere };
 }

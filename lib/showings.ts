@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { now } from "./clock";
 import type { JobKind, NoticeFacts } from "./notifications";
-import { assessEntry, type TerminationBasis } from "./policy/entry";
+import { assessShowingBooking, type TerminationBasis } from "./policy/entry";
 import { localParts, zonedInstant } from "./time";
 
 export class BookingRefused extends Error {
@@ -77,18 +77,16 @@ function facts(unit: UnitRow, s: ShowingRow): NoticeFacts {
 }
 
 function check(unit: UnitRow, startsAt: Date, durationMinutes: number, current: Date) {
-  const reasons: string[] = [];
-  if (startsAt <= current) reasons.push("The showing must be in the future.");
-  const decision = assessEntry({
-    basis: "showing_s26_3",
+  if (startsAt <= current) throw new BookingRefused(["The showing must be in the future."]);
+  // Booking is not entry: the tenant notice is only planned here, never counted as an attempt.
+  const decision = assessShowingBooking({
     terminationBasis: unit.termination_basis,
     leaseEnd: unit.lease_end,
     entryStart: startsAt,
     entryEnd: new Date(startsAt.getTime() + durationMinutes * 60_000),
-    informAttemptAt: noticeTime(startsAt, current),
+    plannedNoticeAt: noticeTime(startsAt, current),
   });
-  reasons.push(...decision.reasons);
-  if (reasons.length) throw new BookingRefused(reasons);
+  if (decision.outcome === "not_bookable") throw new BookingRefused(decision.reasons);
 }
 
 async function enqueue(c: PoolClient, unit: UnitRow, s: ShowingRow, current: Date) {

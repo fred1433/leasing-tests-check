@@ -17,6 +17,7 @@ import {
   testPool,
   UNIT_A_NO_NOTICE,
   UNIT_B,
+  withRunData,
 } from "../support/data";
 
 if (!process.env.DATABASE_URL && process.env.CI) throw new Error("CI must run the integration tests: DATABASE_URL is missing");
@@ -185,6 +186,27 @@ describe.runIf(process.env.DATABASE_URL)("notification worker against PostgreSQL
     const [a, b] = await Promise.all([bookShowing(testPool(), request), bookShowing(testPool(), request)]);
     expect(a).toBe(b);
     expect((await jobsFor(runId)).map((j) => j.kind)).toEqual(["tenant_sms", "tenant_email", "calendar_event"]);
+  });
+
+  it("the fixture lifecycle removes a half-finished seed, and still deletes when the clock reset fails", async () => {
+    const other = run("bystander-2");
+    await seedUnits(other, [UNIT_B]);
+    const halfSeeded = newRunId("fixture-half-seed");
+    await expect(withRunData(halfSeeded, () => seedUnits(halfSeeded, [UNIT_B, UNIT_A_NO_NOTICE], { failAfter: 1 }))).rejects.toThrow(
+      /seed interrupted/,
+    );
+    expect(await rowsForRun(halfSeeded)).toBe(0);
+
+    const clockBroken = newRunId("fixture-clock-reset-fails");
+    await expect(
+      withRunData(clockBroken, () => seedUnits(clockBroken, [UNIT_B]), {
+        resetClock: async () => {
+          throw new Error("clock reset failed (simulated)");
+        },
+      }),
+    ).rejects.toThrow(/clock reset failed/);
+    expect(await rowsForRun(clockBroken)).toBe(0);
+    expect(await rowsForRun(other)).toBe(1);
   });
 
   it("a seed that fails halfway leaves rows that are identifiable and removable, and spares other runs", async () => {
