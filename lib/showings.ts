@@ -116,7 +116,17 @@ async function loadUnit(c: PoolClient, unitId: number): Promise<UnitRow> {
 
 export async function bookShowing(
   pool: Pool,
-  input: { unitId: number; prospectName: string; prospectEmail: string; agentEmail: string; startsAt: Date; durationMinutes?: number; createdBy: string },
+  input: {
+    unitId: number;
+    prospectName: string;
+    prospectEmail: string;
+    agentEmail: string;
+    startsAt: Date;
+    durationMinutes?: number;
+    createdBy: string;
+    /** Identifies one submission of one booking form. The same key twice books once. */
+    requestKey?: string;
+  },
 ): Promise<number> {
   const current = await now(pool);
   const duration = input.durationMinutes ?? 30;
@@ -124,10 +134,17 @@ export async function bookShowing(
     const unit = await loadUnit(c, input.unitId);
     check(unit, input.startsAt, duration, current);
     const r = await c.query<ShowingRow>(
-      `INSERT INTO showings (run_id, unit_id, prospect_name, prospect_email, agent_email, starts_at, duration_minutes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [unit.run_id, unit.id, input.prospectName, input.prospectEmail.trim().toLowerCase(), input.agentEmail, input.startsAt, duration, input.createdBy],
+      `INSERT INTO showings (run_id, unit_id, prospect_name, prospect_email, agent_email, starts_at, duration_minutes, created_by, request_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (request_key) DO NOTHING
+       RETURNING *`,
+      [unit.run_id, unit.id, input.prospectName, input.prospectEmail.trim().toLowerCase(), input.agentEmail, input.startsAt, duration, input.createdBy, input.requestKey ?? null],
     );
+    if (!r.rows[0]) {
+      // The same form was already submitted: return that showing, queue nothing new.
+      const existing = await c.query<{ id: string }>("SELECT id FROM showings WHERE request_key = $1", [input.requestKey]);
+      return Number(existing.rows[0].id);
+    }
     await enqueue(c, unit, r.rows[0], current);
     return Number(r.rows[0].id);
   });

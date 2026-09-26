@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { formatShowingWindow } from "@/lib/time";
@@ -69,6 +70,7 @@ export default async function ShowingsPage({ searchParams }: { searchParams: Pro
           <form action={book} aria-label={`Book a showing for ${u.label}`}>
             <input type="hidden" name="portfolio" value={portfolio} />
             <input type="hidden" name="unitId" value={u.id} />
+            <input type="hidden" name="requestKey" value={randomUUID()} />
             <label>
               Prospect
               <input name="prospectName" required />
