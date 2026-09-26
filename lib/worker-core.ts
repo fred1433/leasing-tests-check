@@ -42,6 +42,9 @@ export async function processNextJob(pool: Pool, env: NodeJS.ProcessEnv = proces
   const row = await claim(pool, at);
   if (!row) return false;
 
+  // Render from the job's snapshot, but only after checking that the snapshot is still
+  // true: one primary-key read of two columns. A job is an intent written when the showing
+  // was booked or moved; by the time it runs, or retries, the showing may have changed.
   const job: QueuedJob = { id: Number(row.id), kind: row.kind, showingVersion: row.showing_version, payload: row.payload };
   const current = await pool.query<{ version: number; status: "booked" | "cancelled" }>(
     "SELECT version, status FROM showings WHERE id = $1",
