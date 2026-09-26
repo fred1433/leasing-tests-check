@@ -50,6 +50,11 @@ jobs:
     name: End to end (Playwright, real Clerk)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # All runs sign in as the same Clerk test user, and teardown revokes that user's sessions.
+    # Two runs at once would revoke each other's sessions mid-test, so they queue.
+    concurrency:
+      group: e2e-shared-clerk-test-user
+      cancel-in-progress: false
     steps:
       - name: Fork pull requests wait for a maintainer
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
