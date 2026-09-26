@@ -88,15 +88,21 @@ jobs:
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           E2E_CLERK_USER_EMAIL: leasing-qa+clerk_test@example.com
           E2E_CLERK_USER_PASSWORD: ${{ secrets.E2E_CLERK_USER_PASSWORD }}
-      - uses: actions/upload-artifact@v4
+      # Traces hold cookies and Clerk tokens. Nothing is uploaded until every trace and report
+      # file is redacted and verified; if verification fails, nothing is uploaded at all.
+      - name: Redact traces and reports before any upload
+        id: redact
         if: always()
+        run: python3 scripts/redact_traces.py test-results reports
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.redact.outcome == 'success'
         with:
           name: playwright-report
           path: |
             reports/playwright-html
             reports/playwright.json
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: failure() && steps.redact.outcome == 'success'
         with:
-          name: playwright-traces
+          name: playwright-traces-redacted
           path: test-results

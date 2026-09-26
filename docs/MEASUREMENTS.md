@@ -10,7 +10,7 @@ Ten fresh runs of the `ci` workflow, each on a new GitHub-hosted runner (workflo
 | | Result |
 |---|---|
 | Runs | 10 |
-| End-to-end test executions | 90 (9 tests per run), 90 passed on the first attempt |
+| End-to-end test executions | 90 (9 per run: 8 scenarios plus the Clerk sign-in step), 90 passed on the first attempt |
 | Retries | 0: Playwright is configured with `retries: 0`, so a pass cannot hide a retry |
 | Failures | 0 |
 | Unit and integration test executions | 800 (80 per run), 0 failures |
@@ -21,7 +21,8 @@ Ten fresh runs of the `ci` workflow, each on a new GitHub-hosted runner (workflo
 
 Ten clean runs do not prove the suite can never flake; they are the measured starting point. The failing runs in this
 repository's history are the intended ones (pull request #1 with the injected defect, the regression test of pull
-request #2 before its fix) and one run on the first push, before the Clerk keys were added to the repository.
+request #2 before its fix) and the first attempt of run 36245954122, on the first push, which started before the
+Clerk keys were added to the repository; its rerun (attempt 2) passed.
 
 ## Mutation testing (separate from the required checks)
 
