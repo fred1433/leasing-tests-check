@@ -1,0 +1,102 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Pull requests from forks get no secrets (GitHub's default) and this workflow never
+# uses pull_request_target, so untrusted code never runs next to the Clerk keys.
+permissions:
+  contents: read
+
+env:
+  DEPLOYMENT_TARGET: test
+  DEPLOYMENT_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+  DATABASE_URL: postgresql:///leasing_test?host=/var/run/postgresql
+  PGSOCKET_PATH: /var/run/postgresql/.s.PGSQL.5432
+  OUTBOUND_ALLOWLIST: "email:*@tenants.example.test,email:*@prospects.example.test,email:*@office.example.test,sms:+1555010*"
+  REQUIRE_NET_ISOLATION: "1"
+
+jobs:
+  checks:
+    name: Unit, integration and isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Start PostgreSQL (unix socket only reachable path from the sandboxed worker)
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres createuser --superuser "$(id -un)"
+          createdb -h /var/run/postgresql leasing_test
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - name: Unit and integration tests (policy, boundary, worker, isolation)
+        run: pnpm test:unit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vitest-junit
+          path: reports/vitest-junit.xml
+
+  e2e:
+    name: End to end (Playwright, real Clerk)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Fork pull requests wait for a maintainer
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "::error::This check signs in to Clerk and needs repository secrets. A maintainer reruns it from a branch in this repository after reading the change."
+          exit 1
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres createuser --superuser "$(id -un)"
+          createdb -h /var/run/postgresql leasing_test
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Build the application from this commit
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+          NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
+      - name: Record what is under test
+        run: |
+          echo "Application commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Test suite commit: ${{ github.sha }} (same checkout)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deployment id: $DEPLOYMENT_ID" >> "$GITHUB_STEP_SUMMARY"
+      - name: Playwright
+        run: pnpm test:e2e
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+          CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+          NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          E2E_CLERK_USER_EMAIL: leasing-qa+clerk_test@example.com
+          E2E_CLERK_USER_PASSWORD: ${{ secrets.E2E_CLERK_USER_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: |
+            reports/playwright-html
+            reports/playwright.json
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results

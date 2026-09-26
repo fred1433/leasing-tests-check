@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.unit.config.ts"
+  },
+  "mutate": [
+    "lib/policy/entry.ts",
+    "lib/outbound/allowlist.ts",
+    "lib/outbound/recipients.ts",
+    "lib/notifications.ts"
+  ],
+  "reporters": [
+    "clear-text",
+    "html",
+    "json"
+  ],
+  "htmlReporter": {
+    "fileName": "reports/mutation/index.html"
+  },
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  },
+  "coverageAnalysis": "perTest",
+  "timeoutMS": 10000,
+  "plugins": [
+    "@stryker-mutator/vitest-runner"
+  ]
+}

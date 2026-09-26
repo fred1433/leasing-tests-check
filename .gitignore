@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.clerk/
+.env*
+!.env.example
+playwright/.auth/
+test-results/
+playwright-report/
+reports/
+.stryker-tmp/
+next-env.d.ts
+*.tsbuildinfo
