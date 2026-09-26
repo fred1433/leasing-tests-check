@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { now } from "./clock";
-import { renderNotice, resolveNotice, type QueuedJob } from "./notifications";
+import { renderNotice, type QueuedJob } from "./notifications";
 import { OutboundRefused, sendThroughBoundary, TransientTransportError } from "./outbound/boundary";
 
 const RETRY_BACKOFF_MS = 2 * 60 * 1000;
@@ -42,16 +42,10 @@ export async function processNextJob(pool: Pool, env: NodeJS.ProcessEnv = proces
   const row = await claim(pool, at);
   if (!row) return false;
 
+  // The job already carries a full snapshot of the notice: render from it and
+  // skip the extra showings lookup on every job.
   const job: QueuedJob = { id: Number(row.id), kind: row.kind, showingVersion: row.showing_version, payload: row.payload };
-  const current = await pool.query<{ version: number; status: "booked" | "cancelled" }>(
-    "SELECT version, status FROM showings WHERE id = $1",
-    [row.showing_id],
-  );
-  const resolution = resolveNotice(job, current.rows[0] ?? null);
-  if (!resolution.send) {
-    await finish(pool, row.id, "superseded", at, resolution.reason);
-    return true;
-  }
+  const resolution = { send: true as const, facts: job.payload };
 
   try {
     await sendThroughBoundary(pool, renderNotice(job.kind, resolution.facts), { runId: row.run_id, jobId: job.id }, env);
